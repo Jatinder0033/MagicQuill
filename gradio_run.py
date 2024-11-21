@@ -1,8 +1,7 @@
+import sys
 import subprocess
 import os
 import gradio as gr
-import os
-from gradio_magicquill import MagicQuill
 import random
 import torch
 import numpy as np
@@ -12,12 +11,16 @@ import io
 from fastapi import FastAPI, Request
 import uvicorn
 import requests
+
+# Add the LLaVA path to the Python system path
+sys.path.append('/content/MagicQuill/LLaVA')
+
+from gradio_magicquill import MagicQuill
 from MagicQuill import folder_paths
 from MagicQuill.llava_new import LLaVAModel
 from MagicQuill.scribble_color_edit import ScribbleColorEditModel
-import time
-import io
 
+# Initialize models
 llavaModel = LLaVAModel()
 scribbleColorEditModel = ScribbleColorEditModel()
 
@@ -27,7 +30,6 @@ def tensor_to_base64(tensor):
     buffered = io.BytesIO()
     pil_image.save(buffered, format="PNG")
     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    
     return img_str
 
 def read_base64_image(base64_image):
@@ -84,7 +86,6 @@ def prepare_images_and_masks(total_mask, original_image, add_color_image, add_ed
     add_edge_mask = create_alpha_mask(add_edge_image) if add_edge_image else torch.zeros_like(total_mask)
     remove_edge_mask = create_alpha_mask(remove_edge_image) if remove_edge_image else torch.zeros_like(total_mask)
     return add_color_image_tensor, original_image_tensor, total_mask, add_edge_mask, remove_edge_mask
-
 
 def guess(original_image_tensor, add_color_image_tensor, add_edge_mask):
     description, ans1, ans2 = llavaModel.process(original_image_tensor, add_color_image_tensor, add_edge_mask)
@@ -173,29 +174,6 @@ def generate_image_handler(x, ckpt_name, negative_prompt, fine_edge, grow_size, 
     x["from_backend"]["generated_image"] = res
     return x
 
-def save_generated_image(image_data):
-    if image_data is None:
-        return "No image to save"
-
-    try:
-        if isinstance(image_data, dict) and 'original_image' in image_data.get('from_frontend', {}):
-            img_str = image_data['from_frontend']['original_image']
-            if img_str.startswith("data:image/png;base64,"):
-                img_str = img_str.split(",")[1]
-            img_data = base64.b64decode(img_str)
-            img = Image.open(io.BytesIO(img_data))
-            
-            os.makedirs("output", exist_ok=True)
-            
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            save_path = os.path.join("output", f"magicquill_{timestamp}.png")
-            img.save(save_path)
-            return f"Image saved to: {save_path}"
-    except Exception as e:
-        return f"Error saving image: {str(e)}"
-
-    return "Failed to save image"
-
 css = '''
 .row {
     width: 90%;
@@ -218,7 +196,7 @@ with gr.Blocks(css=css) as demo:
                 ckpt_name = gr.Dropdown(
                     label="Base Model Name",
                     choices=folder_paths.get_filename_list("checkpoints"),
-                    value=os.path.join('SD1.5', 'realisticVisionV60B1_v51VAE.safetensors'),
+                    value='SD1.5/realisticVisionV60B1_v51VAE.safetensors',
                     interactive=True
                 )
                 negative_prompt = gr.Textbox(
@@ -226,12 +204,6 @@ with gr.Blocks(css=css) as demo:
                     value="",
                     interactive=True
                 )
-                # stroke_as_edge = gr.Radio(
-                #     label="Stroke as Edge",
-                #     choices=['enable', 'disable'],
-                #     value='enable',
-                #     interactive=True
-                # )
                 fine_edge = gr.Radio(
                     label="Fine Edge",
                     choices=['enable', 'disable'],
@@ -276,60 +248,59 @@ with gr.Blocks(css=css) as demo:
                     precision=0,
                     interactive=True
                 )
-                steps = gr.Slider(
+                steps = gr.Number(
                     label="Steps",
-                    minimum=1,
-                    maximum=50,
-                    value=20,
+                    value=30,
+                    precision=0,
                     interactive=True
                 )
-                cfg = gr.Slider(
-                    label="CFG",
-                    minimum=0.0,
-                    maximum=100.0,
-                    value=5.0,
-                    step=0.1,
+                cfg = gr.Number(
+                    label="Cfg",
+                    value=9.0,
+                    precision=0,
                     interactive=True
                 )
                 sampler_name = gr.Dropdown(
-                    label="Sampler Name",
-                    choices=["euler", "euler_ancestral", "heun", "heunpp2","dpm_2", "dpm_2_ancestral", "lms", "dpm_fast", "dpm_adaptive", "dpmpp_2s_ancestral", "dpmpp_sde", "dpmpp_sde_gpu", "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu", "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ddpm", "lcm", "ddim", "uni_pc", "uni_pc_bh2"],
-                    value='euler_ancestral',
+                    label="sampler_name",
+                    choices=['euler', 'euler_a', 'dpmsolver', 'ddim'],
+                    value="euler_a",
                     interactive=True
                 )
                 scheduler = gr.Dropdown(
-                    label="Scheduler",
-                    choices=["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform"],
-                    value='karras',
+                    label="scheduler",
+                    choices=['pndm', 'klms', 'dpmsolver'],
+                    value='klms',
                     interactive=True
                 )
+                btn.click(
+                    generate_image_handler,
+                    inputs=[
+                        ms,
+                        ckpt_name,
+                        negative_prompt,
+                        fine_edge,
+                        grow_size,
+                        edge_strength,
+                        color_strength,
+                        inpaint_strength,
+                        seed,
+                        steps,
+                        cfg,
+                        sampler_name,
+                        scheduler
+                    ],
+                    outputs=ms
+                )
 
-        btn.click(generate_image_handler, inputs=[ms, ckpt_name, negative_prompt, fine_edge, grow_size, edge_strength, color_strength, inpaint_strength, seed, steps, cfg, sampler_name, scheduler], outputs=ms)
-
-        with gr.Row(elem_classes="row"):
-            with gr.Column():
-                save_btn = gr.Button("Save Image", variant="secondary")
-                # save_status = gr.Textbox(label="Save Status", interactive=False)
-        save_btn.click(fn=save_generated_image, inputs=[ms])
-    
 app = FastAPI()
 
-@app.post("/magic_quill/guess_prompt")
-async def guess_prompt(request: Request):
+@app.post("/generate")
+async def generate_from_backend(request: Request):
     data = await request.json()
-    res = guess_prompt_handler(data['original_image'], data['add_color_image'], data['add_edge_image'])
-    return res
+    ms.from_frontend.update(data["from_frontend"])
+    ms.from_backend.update(data["from_backend"])
+    ms.generate_image()
+    return ms.to_dict()
 
-@app.post("/magic_quill/process_background_img")
-async def process_background_img(request: Request):
-    img = await request.json()
-    resized_img_tensor = load_and_resize_image(img)
-    resized_img_base64 = "data:image/png;base64," + tensor_to_base64(resized_img_tensor)
-    # add more processing here
-    return resized_img_base64
-
-app = gr.mount_gradio_app(app, demo, "/")
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=7860)
-    # demo.launch()
+if __name__ == '__main__':
+    demo.launch(server_name="0.0.0.0", share=True)
